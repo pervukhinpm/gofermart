@@ -1,25 +1,98 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"github.com/pervukhinpm/gophermart/internal/model"
 	"github.com/pervukhinpm/gophermart/internal/repository"
 	"github.com/pervukhinpm/gophermart/internal/service"
 	"io"
 	"net/http"
+	"time"
 )
 
 type GophermartHandler struct {
 	orderService   *service.OrderService
 	accrualService *service.AccrualService
+	userService    *service.UserService
+}
+
+func NewGophermartHandler(orderService *service.OrderService, accrualService *service.AccrualService, userService *service.UserService) *GophermartHandler {
+	return &GophermartHandler{
+		orderService:   orderService,
+		accrualService: accrualService,
+		userService:    userService,
+	}
 }
 
 func (g *GophermartHandler) RegisterUser(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Content-Type") != "application/json" {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
 
+	var user model.RegisterUser
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	err = json.Unmarshal(bodyBytes, &user)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	tokenString, err := g.userService.RegisterUser(ctx, &user)
+	if err != nil {
+		if errors.Is(err, repository.ErrUserDuplicated) {
+			w.WriteHeader(http.StatusConflict)
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Authorization", "Bearer "+tokenString)
+	w.WriteHeader(http.StatusOK)
 }
 
 func (g *GophermartHandler) LoginUser(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Content-Type") != "application/json" {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	var user model.LoginUser
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	err = json.Unmarshal(bodyBytes, &user)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	tokenString, err := g.userService.LoginUser(ctx, &user)
+	if err != nil {
+		if errors.Is(err, service.ErrInvalidLoginAndPassword) {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Authorization", "Bearer "+tokenString)
+	w.WriteHeader(http.StatusOK)
 }
 
 func (g *GophermartHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
@@ -59,6 +132,10 @@ func (g *GophermartHandler) CreateOrder(w http.ResponseWriter, r *http.Request) 
 		}
 		if errors.Is(err, repository.ErrOrderAlreadyExist) {
 			http.Error(w, "Order already exists", http.StatusConflict)
+			return
+		}
+		if errors.Is(err, service.ErrOrderNumberInvalid) {
+			http.Error(w, "Invalid order number", http.StatusUnprocessableEntity)
 			return
 		}
 		w.WriteHeader(http.StatusInternalServerError)

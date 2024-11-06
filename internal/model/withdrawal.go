@@ -1,9 +1,9 @@
-package models
+package model
 
 import "time"
 
 type Withdrawal struct {
-	UserUUID    string
+	UserID      string
 	OrderID     string    `json:"order"`
 	Amount      float64   `json:"sum"`
 	ProcessedAt time.Time `json:"processed_at"`

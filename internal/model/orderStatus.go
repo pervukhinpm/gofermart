@@ -1,4 +1,4 @@
-package models
+package model
 
 type OrderStatus string
 
@@ -7,5 +7,4 @@ const (
 	OrderStatusProcessing OrderStatus = "PROCESSING"
 	OrderStatusProcessed  OrderStatus = "PROCESSED"
 	OrderStatusInvalid    OrderStatus = "INVALID"
-	OrderStatusRegistered OrderStatus = "REGISTERED"
 )

@@ -4,46 +4,30 @@ import (
 	"context"
 	"github.com/pervukhinpm/gophermart/internal/jwt"
 	"net/http"
+	"strings"
 )
 
-const CookieName = "jwt"
-
 func Auth(next http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		fn := func(w http.ResponseWriter, r *http.Request) {
-			var tokenString string
-
-			cookie, err := r.Cookie(CookieName)
-
-			if err != nil {
-				tokenString, err = jwt.BuildJWTString()
-
-				if err != nil {
-					w.WriteHeader(http.StatusBadRequest)
-					return
-				}
-
-				http.SetCookie(w, &http.Cookie{
-					Name:  CookieName,
-					Value: tokenString,
-				})
-			} else {
-				tokenString = cookie.Value
-			}
-
-			userID, err := jwt.GetUserID(tokenString)
-
-			if err != nil {
-				w.WriteHeader(http.StatusUnauthorized)
-				return
-			}
-
-			ctx := setUserID(r.Context(), userID)
-
-			next.ServeHTTP(w, r.WithContext(ctx))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
 		}
-		return http.HandlerFunc(fn)
-	}(next)
+
+		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+
+		userID, err := jwt.GetUserID(tokenString)
+
+		if err != nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		ctx := setUserID(r.Context(), userID)
+
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
 }
 
 type UserID struct {

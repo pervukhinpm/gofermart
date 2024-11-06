@@ -5,7 +5,7 @@ import (
 	"github.com/pervukhinpm/gophermart/internal/middleware"
 )
 
-func (g *GophermartHandler) Router() chi.Router {
+func Router(g *GophermartHandler) chi.Router {
 	r := chi.NewRouter()
 
 	r.Use(middleware.Logger)
@@ -13,13 +13,12 @@ func (g *GophermartHandler) Router() chi.Router {
 	// Публичные маршруты (без аутентификации)
 	r.Group(func(r chi.Router) {
 		r.Post("/api/user/register", g.RegisterUser)
+		r.Post("/api/user/login", g.LoginUser)
 	})
 
 	// Маршруты, требующие аутентификации
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.Auth)
-
-		r.Post("/api/user/login", g.LoginUser)
 
 		r.Post("/api/user/orders", g.CreateOrder)
 		r.Get("/api/user/orders", g.GetOrders)
