@@ -2,19 +2,20 @@ package repository
 
 import (
 	"context"
+	"github.com/jackc/pgerrcode"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pervukhinpm/gophermart/internal/config"
 	"github.com/pervukhinpm/gophermart/internal/middleware"
 	"github.com/pervukhinpm/gophermart/internal/model"
 	"go.uber.org/zap"
-	"strconv"
 )
 
 type Repository interface {
 	AddOrder(ctx context.Context, order *model.Order) error
-	GetOrder(ctx context.Context, id int) (*model.Order, error)
+	GetOrder(ctx context.Context, id string) (*model.Order, error)
 	GetOrders(ctx context.Context, userID string) (*[]model.Order, error)
-	UpdateOrderStatus(ctx context.Context, orderNumber string, orderStatus model.OrderStatus) error
+	UpdateOrder(ctx context.Context, order *model.Order) error
 
 	GetUser(ctx context.Context, userID string) (model.User, error)
 	CreateUser(ctx context.Context, user *model.User) error
@@ -59,9 +60,9 @@ func (dr *DatabaseRepository) createUsersDB(ctx context.Context) error {
 	query := `
 		CREATE TABLE IF NOT EXISTS users (
 		id varchar NOT NULL,
-		login varchar NOT NULL,
-		password varchar UNIQUE NOT NULL,
-		balance numeric(8, 2) DEFAULT 0,
+		login varchar UNIQUE NOT NULL,
+		password varchar NOT NULL,
+		balance int DEFAULT 0,
 		CONSTRAINT users_pk PRIMARY KEY (id)
 		);`
 	_, err := dr.db.Exec(ctx, query)
@@ -75,7 +76,7 @@ func (dr *DatabaseRepository) createOrdersDB(ctx context.Context) error {
 		user_id varchar REFERENCES users ON DELETE CASCADE,
 		status varchar NOT NULL,
 		uploaded_at timestamp with time zone NOT NULL,
-		accrual numeric(8, 2),
+		accrual int,
 		CONSTRAINT orders_pk PRIMARY KEY (id)
 	);`
 	_, err := dr.db.Exec(ctx, query)
@@ -88,7 +89,7 @@ func (dr *DatabaseRepository) createWithdrawalsDB(ctx context.Context) error {
 		user_id varchar REFERENCES users ON DELETE CASCADE,
 		order_id varchar NOT NULL,
 		processed_at timestamp with time zone NOT NULL,
-		sum numeric(8, 2),
+		sum int,
 		CONSTRAINT withdrawals_pk PRIMARY KEY (order_id)
 		);`
 	_, err := dr.db.Exec(ctx, query)
@@ -100,7 +101,7 @@ func (dr *DatabaseRepository) AddOrder(ctx context.Context, order *model.Order) 
 	INSERT INTO orders (id, user_id, status, uploaded_at, accrual)
 	VALUES ($1, $2, $3, $4, $5);`
 
-	result, err := dr.db.Exec(ctx, query, order.OrderNumber, order.UserID, order.ProcessedAt, order.Status, 0)
+	result, err := dr.db.Exec(ctx, query, order.OrderNumber, order.UserID, order.Status, order.ProcessedAt, 0)
 
 	if err != nil {
 		middleware.Log.Error("Error inserting order", zap.Error(err))
@@ -128,7 +129,7 @@ func (dr *DatabaseRepository) AddOrder(ctx context.Context, order *model.Order) 
 	return nil
 }
 
-func (dr *DatabaseRepository) GetOrder(ctx context.Context, id int) (*model.Order, error) {
+func (dr *DatabaseRepository) GetOrder(ctx context.Context, id string) (*model.Order, error) {
 	query := `
 		SELECT id, user_id, status, uploaded_at, accrual
 		FROM orders
@@ -144,10 +145,10 @@ func (dr *DatabaseRepository) GetOrder(ctx context.Context, id int) (*model.Orde
 	)
 
 	if err != nil {
-		middleware.Log.Error("Error fetching order", zap.String("orderID", strconv.Itoa(id)), zap.Error(err))
+		middleware.Log.Error("Error fetching order", zap.String("orderID", id), zap.Error(err))
 		return nil, err
 	}
-
+	order.Accrual = order.Accrual / 100
 	return &order, nil
 }
 
@@ -172,24 +173,23 @@ func (dr *DatabaseRepository) GetOrders(ctx context.Context, userID string) (*[]
 			middleware.Log.Error("Error scanning order row", zap.Error(err))
 			return nil, err
 		}
+		order.Accrual = order.Accrual / 100
 		orders = append(orders, order)
 	}
 
 	return &orders, nil
 }
 
-func (dr *DatabaseRepository) UpdateOrderStatus(ctx context.Context, orderNumber string, orderStatus model.OrderStatus) error {
+func (dr *DatabaseRepository) UpdateOrder(ctx context.Context, order *model.Order) error {
 	query := `
-		UPDATE orders
-		SET status = $1
-		WHERE id = $2;`
-
-	_, err := dr.db.Exec(ctx, query, orderStatus, orderNumber)
+	UPDATE orders
+	SET order_status = $1, order_accrual = $2
+	WHERE id = $2;`
+	_, err := dr.db.Exec(ctx, query, order)
 	if err != nil {
-		middleware.Log.Error("Error updating order status", zap.String("orderNumber", orderNumber), zap.Error(err))
+		middleware.Log.Error("Error updating order", zap.String("orderNumber", order.OrderNumber), zap.Error(err))
 		return err
 	}
-
 	return nil
 }
 
@@ -197,7 +197,7 @@ func (dr *DatabaseRepository) GetUser(ctx context.Context, userID string) (model
 	query := `
 		SELECT id, login, password, balance
 		FROM users
-		WHERE id = $1;`
+		WHERE login = $1;`
 
 	user := model.User{}
 	err := dr.db.QueryRow(ctx, query, userID).Scan(&user.ID, &user.Login, &user.Password, &user.Balance)
@@ -215,7 +215,12 @@ func (dr *DatabaseRepository) CreateUser(ctx context.Context, user *model.User) 
 		VALUES ($1, $2, $3, $4);`
 
 	_, err := dr.db.Exec(ctx, query, user.ID, user.Login, user.Password, user.Balance)
+
 	if err != nil {
+		if pgErr, ok := err.(*pgconn.PgError); ok && pgerrcode.IsIntegrityConstraintViolation(pgErr.Code) {
+			middleware.Log.Warn("Duplicate user entry", zap.String("userID", user.ID), zap.String("login", user.Login))
+			return ErrUserDuplicated
+		}
 		middleware.Log.Error("Error creating user", zap.String("userID", user.ID), zap.Error(err))
 		return err
 	}

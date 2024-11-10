@@ -6,7 +6,6 @@ import (
 	"github.com/pervukhinpm/gophermart/internal/luhn"
 	"github.com/pervukhinpm/gophermart/internal/model"
 	"github.com/pervukhinpm/gophermart/internal/repository"
-	"strconv"
 	"time"
 )
 
@@ -23,15 +22,8 @@ func NewOrderService(repo *repository.DatabaseRepository) *OrderService {
 }
 
 func (o *OrderService) CreateOrder(ctx context.Context, orderNumber string, userID string) error {
-
-	orderNumberFormatted, err := strconv.Atoi(orderNumber)
-
-	if err != nil {
-		return ErrOrderNumberInvalid
-	}
-
 	order := &model.Order{
-		OrderNumber: orderNumberFormatted,
+		OrderNumber: orderNumber,
 		UserID:      userID,
 		Status:      model.OrderStatusNew,
 		ProcessedAt: time.Now(),

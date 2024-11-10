@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"github.com/pervukhinpm/gophermart/internal/middleware"
 	"github.com/pervukhinpm/gophermart/internal/model"
 	"github.com/pervukhinpm/gophermart/internal/repository"
 	"github.com/pervukhinpm/gophermart/internal/service"
@@ -44,7 +46,7 @@ func (g *GophermartHandler) RegisterUser(w http.ResponseWriter, r *http.Request)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	defer cancel()
 
 	tokenString, err := g.userService.RegisterUser(ctx, &user)
@@ -57,7 +59,7 @@ func (g *GophermartHandler) RegisterUser(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	w.Header().Set("Authorization", "Bearer "+tokenString)
+	w.Header().Set("Authorization", fmt.Sprintf("Bearer %s", tokenString))
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -78,7 +80,7 @@ func (g *GophermartHandler) LoginUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Second)
 	defer cancel()
 
 	tokenString, err := g.userService.LoginUser(ctx, &user)
@@ -91,7 +93,7 @@ func (g *GophermartHandler) LoginUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Authorization", "Bearer "+tokenString)
+	w.Header().Set("Authorization", fmt.Sprintf("Bearer %s", tokenString))
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -112,7 +114,7 @@ func (g *GophermartHandler) CreateOrder(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	userID := "string"
+	userID := middleware.GetUserID(r.Context())
 
 	orderNumber := string(body)
 
@@ -148,7 +150,7 @@ func (g *GophermartHandler) CreateOrder(w http.ResponseWriter, r *http.Request) 
 }
 
 func (g *GophermartHandler) GetOrders(w http.ResponseWriter, r *http.Request) {
-	userID := ""
+	userID := middleware.GetUserID(r.Context())
 
 	ctx := r.Context()
 

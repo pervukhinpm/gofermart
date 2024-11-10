@@ -3,7 +3,6 @@ package jwt
 import (
 	"fmt"
 	"github.com/golang-jwt/jwt/v4"
-	"github.com/google/uuid"
 	"time"
 )
 
@@ -17,8 +16,7 @@ const (
 	SecretKey = "secret_key"
 )
 
-func BuildJWTString() (string, error) {
-	userID := uuid.NewString()
+func BuildJWTString(userID string) (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(TokenExp)),

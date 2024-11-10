@@ -20,8 +20,10 @@ func NewUserService(repo *repository.DatabaseRepository) *UserService {
 }
 
 func (u *UserService) RegisterUser(ctx context.Context, registerUser *model.RegisterUser) (string, error) {
+	userID := uuid.NewString()
+
 	user := &model.User{
-		ID:       uuid.NewString(),
+		ID:       userID,
 		Login:    registerUser.Login,
 		Password: registerUser.Password,
 		Balance:  0,
@@ -33,7 +35,7 @@ func (u *UserService) RegisterUser(ctx context.Context, registerUser *model.Regi
 		return "", err
 	}
 
-	return jwt.BuildJWTString()
+	return jwt.BuildJWTString(registerUser.Login)
 }
 
 func (u *UserService) LoginUser(ctx context.Context, loginUser *model.LoginUser) (string, error) {
@@ -47,7 +49,7 @@ func (u *UserService) LoginUser(ctx context.Context, loginUser *model.LoginUser)
 	}
 
 	if loginUser.Login == dbUser.Login && loginUser.Password == dbUser.Password {
-		return jwt.BuildJWTString()
+		return jwt.BuildJWTString(loginUser.Login)
 	}
 
 	return "", ErrInvalidLoginAndPassword
