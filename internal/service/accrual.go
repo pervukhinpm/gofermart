@@ -5,9 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/pervukhinpm/gophermart/internal/config"
 	"github.com/pervukhinpm/gophermart/internal/model"
-	"github.com/pervukhinpm/gophermart/internal/repository"
 	"io"
 	"log"
 	"net/http"
@@ -30,42 +28,24 @@ func (e *ErrTooManyRequests) Error() string {
 	return fmt.Sprintf("too many requests, retry after: %d", e.retryAfter)
 }
 
-type AccrualService struct {
-	repo        *repository.DatabaseRepository
-	appConfig   config.Config
-	taskQueue   chan *model.Order
-	workerCount int
+type AccrualService interface {
+	StartWorkers()
+	CreateAccrual(orderNumber string, userID string)
 }
 
-func NewAccrualService(repo *repository.DatabaseRepository, appConfig config.Config) *AccrualService {
-	workerCount := 5
-	queueSize := 100
-
-	service := &AccrualService{
-		repo:        repo,
-		appConfig:   appConfig,
-		taskQueue:   make(chan *model.Order, queueSize),
-		workerCount: workerCount,
-	}
-
-	service.startWorkers()
-
-	return service
-}
-
-// startWorkers запускает воркеры для обработки задач в очереди
-func (s *AccrualService) startWorkers() {
-	for i := 0; i < s.workerCount; i++ {
-		go s.worker(i)
+// StartWorkers запускает воркеры для обработки задач в очереди
+func (g *GophermartService) StartWorkers() {
+	for i := 0; i < g.workerCount; i++ {
+		go g.worker(i)
 	}
 }
 
-func (s *AccrualService) CreateAccrual(orderNumber string, userID string) {
+func (g *GophermartService) CreateAccrual(orderNumber string, userID string) {
 	order := &model.Order{OrderNumber: orderNumber, UserID: userID, Status: model.OrderStatusNew}
 	// Блокировка до тех пор, пока не появится место в очереди
 	for {
 		select {
-		case s.taskQueue <- order:
+		case g.taskQueue <- order:
 			log.Printf("Order %s added to queue for accrual processing", orderNumber)
 			return
 		default:
@@ -76,15 +56,15 @@ func (s *AccrualService) CreateAccrual(orderNumber string, userID string) {
 }
 
 // worker обрабатывает заказы из очереди
-func (s *AccrualService) worker(id int) {
-	for order := range s.taskQueue {
+func (g *GophermartService) worker(id int) {
+	for order := range g.taskQueue {
 		log.Printf("Worker %d processing order %s", id, order.OrderNumber)
-		s.processAccrual(order)
+		g.processAccrual(order)
 	}
 }
 
-func (s *AccrualService) processAccrual(order *model.Order) {
-	accrual, err := s.getAccrual(order)
+func (g *GophermartService) processAccrual(order *model.Order) {
+	accrual, err := g.getAccrual(order)
 
 	retryDelay := time.Second * 1
 
@@ -101,7 +81,7 @@ func (s *AccrualService) processAccrual(order *model.Order) {
 
 	switch accrual.Status {
 	case model.OrderStatusRegistered, model.OrderStatusProcessing:
-		s.processAccrual(order)
+		g.processAccrual(order)
 	case model.OrderStatusProcessed, model.OrderStatusInvalid:
 		updatedOrder := &model.Order{
 			OrderNumber: order.OrderNumber,
@@ -110,19 +90,19 @@ func (s *AccrualService) processAccrual(order *model.Order) {
 			ProcessedAt: order.ProcessedAt,
 			Accrual:     int(accrual.Accrual * 100),
 		}
-		err = s.repo.UpdateOrder(context.Background(), updatedOrder)
+		err = g.repo.UpdateOrder(context.Background(), updatedOrder)
 		if err != nil {
 			log.Printf("Error updating order status for order %s: %s", order.OrderNumber, err)
 		}
 	default:
-		s.processAccrual(order)
+		g.processAccrual(order)
 	}
 }
 
-func (s *AccrualService) getAccrual(order *model.Order) (*model.Accrual, error) {
+func (g *GophermartService) getAccrual(order *model.Order) (*model.Accrual, error) {
 	accrual := &model.Accrual{}
 
-	url := fmt.Sprintf("%s/api/orders/%s", s.appConfig.AccrualSystemAddress, order.OrderNumber)
+	url := fmt.Sprintf("%s/api/orders/%s", g.appConfig.AccrualSystemAddress, order.OrderNumber)
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		log.Println(err)

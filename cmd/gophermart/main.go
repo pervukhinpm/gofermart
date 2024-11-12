@@ -31,10 +31,9 @@ func main() {
 		}
 	}(appRepository)
 
-	orderService := service.NewOrderService(appRepository)
-	accrualService := service.NewAccrualService(appRepository, *appConfig)
-	userService := service.NewUserService(appRepository)
-	handler := api.NewGophermartHandler(orderService, accrualService, userService)
+	gophermartService := service.NewGophermartService(appRepository, *appConfig)
+
+	handler := api.NewGophermartHandler(gophermartService)
 
 	router := api.Router(handler)
 

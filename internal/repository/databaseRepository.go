@@ -2,7 +2,9 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"github.com/jackc/pgerrcode"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pervukhinpm/gophermart/internal/config"
@@ -19,9 +21,8 @@ type Repository interface {
 
 	GetUser(ctx context.Context, userID string) (model.User, error)
 	CreateUser(ctx context.Context, user *model.User) error
-	UpdateUserBalance(ctx context.Context, userID string, userBalance int) error
 
-	CreateWithdrawal(ctx context.Context, userID string, withdrawal model.Withdrawal) error
+	CreateWithdrawal(ctx context.Context, user model.User, withdrawal *model.Withdrawal) error
 	GetWithdrawals(ctx context.Context, userID string) (*[]model.Withdrawal, error)
 
 	Close() error
@@ -59,10 +60,10 @@ func NewDatabaseRepository(ctx context.Context, config config.Config) (*Database
 func (dr *DatabaseRepository) createUsersDB(ctx context.Context) error {
 	query := `
 		CREATE TABLE IF NOT EXISTS users (
-		id varchar NOT NULL,
-		login varchar UNIQUE NOT NULL,
+		id varchar UNIQUE NOT NULL,
 		password varchar NOT NULL,
 		balance int DEFAULT 0,
+		withdrawn int DEFAULT 0,
 		CONSTRAINT users_pk PRIMARY KEY (id)
 		);`
 	_, err := dr.db.Exec(ctx, query)
@@ -171,6 +172,9 @@ func (dr *DatabaseRepository) GetOrders(ctx context.Context, userID string) (*[]
 		err := rows.Scan(&order.OrderNumber, &order.UserID, &order.Status, &order.ProcessedAt, &order.Accrual)
 		if err != nil {
 			middleware.Log.Error("Error scanning order row", zap.Error(err))
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, ErrNoOrders
+			}
 			return nil, err
 		}
 		order.Accrual = order.Accrual / 100
@@ -181,26 +185,46 @@ func (dr *DatabaseRepository) GetOrders(ctx context.Context, userID string) (*[]
 }
 
 func (dr *DatabaseRepository) UpdateOrder(ctx context.Context, order *model.Order) error {
-	query := `
+	query1 := `
 	UPDATE orders
-	SET order_status = $1, order_accrual = $2
-	WHERE id = $2;`
-	_, err := dr.db.Exec(ctx, query, order)
+	SET status = $1, accrual = $2
+	WHERE id = $3;`
+
+	query2 := `
+	UPDATE users
+	SET balance = balance + $1
+	WHERE login = $2;`
+
+	tx, err := dr.db.Begin(ctx)
+
 	if err != nil {
-		middleware.Log.Error("Error updating order", zap.String("orderNumber", order.OrderNumber), zap.Error(err))
+		tx.Rollback(ctx)
 		return err
 	}
-	return nil
+
+	_, err = tx.Exec(ctx, query1, order.Status, order.Accrual, order.OrderNumber)
+	if err != nil {
+		tx.Rollback(ctx)
+		return err
+	}
+
+	_, err = tx.Exec(ctx, query2, order.Accrual, order.UserID)
+	if err != nil {
+		tx.Rollback(ctx)
+		return err
+	}
+
+	return tx.Commit(ctx)
 }
 
 func (dr *DatabaseRepository) GetUser(ctx context.Context, userID string) (model.User, error) {
 	query := `
-		SELECT id, login, password, balance
+		SELECT password, balance, withdrawn
 		FROM users
-		WHERE login = $1;`
+		WHERE id = $1;`
 
 	user := model.User{}
-	err := dr.db.QueryRow(ctx, query, userID).Scan(&user.ID, &user.Login, &user.Password, &user.Balance)
+	err := dr.db.QueryRow(ctx, query, userID).Scan(&user.Login, &user.Password, &user.Balance, &user.Withdrawn)
 	if err != nil {
 		middleware.Log.Error("Error fetching user", zap.String("userID", userID), zap.Error(err))
 		return user, err
@@ -211,50 +235,53 @@ func (dr *DatabaseRepository) GetUser(ctx context.Context, userID string) (model
 
 func (dr *DatabaseRepository) CreateUser(ctx context.Context, user *model.User) error {
 	query := `
-		INSERT INTO users (id, login, password, balance)
-		VALUES ($1, $2, $3, $4);`
+		INSERT INTO users (id, password, balance, withdrawn, accrual)
+		VALUES ($1, $2, $3);`
 
-	_, err := dr.db.Exec(ctx, query, user.ID, user.Login, user.Password, user.Balance)
+	_, err := dr.db.Exec(ctx, query, user.Login, user.Password, user.Balance, 0, 0)
 
 	if err != nil {
 		if pgErr, ok := err.(*pgconn.PgError); ok && pgerrcode.IsIntegrityConstraintViolation(pgErr.Code) {
-			middleware.Log.Warn("Duplicate user entry", zap.String("userID", user.ID), zap.String("login", user.Login))
+			middleware.Log.Warn("Duplicate user entry", zap.String("userID", user.Login), zap.String("login", user.Login))
 			return ErrUserDuplicated
 		}
-		middleware.Log.Error("Error creating user", zap.String("userID", user.ID), zap.Error(err))
+		middleware.Log.Error("Error creating user", zap.String("userID", user.Login), zap.Error(err))
 		return err
 	}
 
 	return nil
 }
 
-func (dr *DatabaseRepository) UpdateUserBalance(ctx context.Context, userID string, userBalance int) error {
-	query := `
-		UPDATE users
-		SET balance = $1
-		WHERE id = $2;`
+func (dr *DatabaseRepository) CreateWithdrawal(ctx context.Context, user model.User, withdrawal *model.Withdrawal) error {
+	query1 := `
+	UPDATE users
+	SET balance = $1, withdrawn = $2
+	WHERE id = $3;`
 
-	_, err := dr.db.Exec(ctx, query, userBalance, userID)
+	query2 := `
+	INSERT INTO withdrawals (order_id, user_uuid, processed_at, amount) 
+	VALUES ($1, $2, $3, $4);`
+
+	tx, err := dr.db.Begin(ctx)
+
 	if err != nil {
-		middleware.Log.Error("Error updating user balance", zap.String("userID", userID), zap.Error(err))
+		tx.Rollback(ctx)
 		return err
 	}
 
-	return nil
-}
-
-func (dr *DatabaseRepository) CreateWithdrawal(ctx context.Context, userID string, withdrawal model.Withdrawal) error {
-	query := `
-		INSERT INTO withdrawals (user_id, order_id, processed_at, sum)
-		VALUES ($1, $2, $3, $4);`
-
-	_, err := dr.db.Exec(ctx, query, userID, withdrawal.OrderID, withdrawal.ProcessedAt, withdrawal.Amount)
+	_, err = tx.Exec(ctx, query1, user.Balance, user.Withdrawn, user.Login)
 	if err != nil {
-		middleware.Log.Error("Error creating withdrawal", zap.String("userID", userID), zap.Error(err))
+		tx.Rollback(ctx)
 		return err
 	}
 
-	return nil
+	_, err = tx.Exec(ctx, query2, withdrawal.OrderID, withdrawal.UserID, withdrawal.ProcessedAt, withdrawal.Amount)
+	if err != nil {
+		tx.Rollback(ctx)
+		return err
+	}
+
+	return tx.Commit(ctx)
 }
 
 func (dr *DatabaseRepository) GetWithdrawals(ctx context.Context, userID string) (*[]model.Withdrawal, error) {
@@ -276,6 +303,9 @@ func (dr *DatabaseRepository) GetWithdrawals(ctx context.Context, userID string)
 		err := rows.Scan(&withdrawal.UserID, &withdrawal.OrderID, &withdrawal.ProcessedAt, &withdrawal.Amount)
 		if err != nil {
 			middleware.Log.Error("Error scanning withdrawal row", zap.Error(err))
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, ErrNoWithdrawals
+			}
 			return nil, err
 		}
 		withdrawals = append(withdrawals, withdrawal)
