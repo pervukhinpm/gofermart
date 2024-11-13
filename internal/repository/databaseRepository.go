@@ -35,6 +35,9 @@ type DatabaseRepository struct {
 
 func NewDatabaseRepository(ctx context.Context, config config.Config) (*DatabaseRepository, error) {
 	db, err := pgxpool.New(context.Background(), config.DataBaseURI)
+	if err != nil {
+		return nil, err
+	}
 
 	dbRepository := DatabaseRepository{
 		db: db,

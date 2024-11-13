@@ -28,7 +28,3 @@ func NewGophermartService(repo *repository.DatabaseRepository, appConfig config.
 		workerCount: 5,
 	}
 }
-
-func (g *GophermartService) startWorkers() {
-	g.startWorkers()
-}
