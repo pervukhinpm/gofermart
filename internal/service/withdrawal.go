@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/pervukhinpm/gophermart/internal/model"
+	"github.com/pervukhinpm/gophermart/internal/repository"
 	"time"
 )
 
@@ -15,12 +16,11 @@ type WithdrawalService interface {
 }
 
 func (g *GophermartService) GetWithdrawals(ctx context.Context, userID string) (*[]model.Withdrawal, error) {
-	withdrawals, err := g.repo.GetWithdrawals(ctx, userID)
-	return withdrawals, err
+	return g.repo.GetWithdrawals(ctx, userID)
 }
 
 func (g *GophermartService) CreateWithdraw(ctx context.Context, withdrawal *model.Withdrawal) error {
-	user, err := g.repo.GetUser(ctx, withdrawal.UserID)
+	user, err := g.repo.GetUserByID(ctx, withdrawal.UserID)
 	if err != nil {
 		return err
 	}
@@ -33,6 +33,12 @@ func (g *GophermartService) CreateWithdraw(ctx context.Context, withdrawal *mode
 	user.Withdrawn += withdrawalAmount
 
 	withdrawal.ProcessedAt = time.Now()
-	err = g.repo.CreateWithdrawal(ctx, user, withdrawal)
-	return nil
+
+	dbWithdrawal := repository.Withdrawal{
+		OrderID:     withdrawal.OrderID,
+		Amount:      withdrawalAmount,
+		ProcessedAt: withdrawal.ProcessedAt,
+	}
+
+	return g.repo.CreateWithdrawal(ctx, user, &dbWithdrawal)
 }

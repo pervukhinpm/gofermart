@@ -19,10 +19,11 @@ type Repository interface {
 	GetOrders(ctx context.Context, userID string) (*[]model.Order, error)
 	UpdateOrder(ctx context.Context, order *model.Order) error
 
-	GetUser(ctx context.Context, userID string) (model.User, error)
+	GetUserByLogin(ctx context.Context, login string) (model.User, error)
+	GetUserByID(ctx context.Context, userID string) (model.User, error)
 	CreateUser(ctx context.Context, user *model.User) error
 
-	CreateWithdrawal(ctx context.Context, user model.User, withdrawal *model.Withdrawal) error
+	CreateWithdrawal(ctx context.Context, user model.User, withdrawal *Withdrawal) error
 	GetWithdrawals(ctx context.Context, userID string) (*[]model.Withdrawal, error)
 
 	Close() error
@@ -61,6 +62,7 @@ func (dr *DatabaseRepository) createUsersDB(ctx context.Context) error {
 	query := `
 		CREATE TABLE IF NOT EXISTS users (
 		id varchar UNIQUE NOT NULL,
+		login varchar UNIQUE NOT NULL,
 		password varchar NOT NULL,
 		balance int DEFAULT 0,
 		withdrawn int DEFAULT 0,
@@ -99,10 +101,10 @@ func (dr *DatabaseRepository) createWithdrawalsDB(ctx context.Context) error {
 
 func (dr *DatabaseRepository) AddOrder(ctx context.Context, order *model.Order) error {
 	query := `
-	INSERT INTO orders (id, user_id, status, uploaded_at, accrual)
-	VALUES ($1, $2, $3, $4, $5);`
+	INSERT INTO orders (id, user_id, status, uploaded_at)
+	VALUES ($1, $2, $3, $4);`
 
-	result, err := dr.db.Exec(ctx, query, order.OrderNumber, order.UserID, order.Status, order.ProcessedAt, 0)
+	result, err := dr.db.Exec(ctx, query, order.OrderNumber, order.UserID, order.Status, order.ProcessedAt)
 
 	if err != nil {
 		middleware.Log.Error("Error inserting order", zap.Error(err))
@@ -166,7 +168,7 @@ func (dr *DatabaseRepository) GetOrders(ctx context.Context, userID string) (*[]
 	}
 	defer rows.Close()
 
-	var orders []model.Order
+	orders := make([]model.Order, 0)
 	for rows.Next() {
 		var order model.Order
 		err := rows.Scan(&order.OrderNumber, &order.UserID, &order.Status, &order.ProcessedAt, &order.Accrual)
@@ -181,6 +183,10 @@ func (dr *DatabaseRepository) GetOrders(ctx context.Context, userID string) (*[]
 		orders = append(orders, order)
 	}
 
+	if len(orders) == 0 {
+		return &orders, ErrNoOrders
+	}
+
 	return &orders, nil
 }
 
@@ -193,7 +199,7 @@ func (dr *DatabaseRepository) UpdateOrder(ctx context.Context, order *model.Orde
 	query2 := `
 	UPDATE users
 	SET balance = balance + $1
-	WHERE login = $2;`
+	WHERE id = $2;`
 
 	tx, err := dr.db.Begin(ctx)
 
@@ -217,13 +223,29 @@ func (dr *DatabaseRepository) UpdateOrder(ctx context.Context, order *model.Orde
 	return tx.Commit(ctx)
 }
 
-func (dr *DatabaseRepository) GetUser(ctx context.Context, userID string) (model.User, error) {
+func (dr *DatabaseRepository) GetUserByLogin(ctx context.Context, login string) (model.User, error) {
 	query := `
-		SELECT password, balance, withdrawn
+		SELECT id, password, balance, withdrawn
+		FROM users
+		WHERE login = $1;`
+
+	user := model.User{Login: login}
+	err := dr.db.QueryRow(ctx, query, login).Scan(&user.ID, &user.Password, &user.Balance, &user.Withdrawn)
+	if err != nil {
+		middleware.Log.Error("Error fetching user", zap.String("login", login), zap.Error(err))
+		return user, err
+	}
+
+	return user, nil
+}
+
+func (dr *DatabaseRepository) GetUserByID(ctx context.Context, userID string) (model.User, error) {
+	query := `
+		SELECT login, password, balance, withdrawn
 		FROM users
 		WHERE id = $1;`
 
-	user := model.User{}
+	user := model.User{ID: userID}
 	err := dr.db.QueryRow(ctx, query, userID).Scan(&user.Login, &user.Password, &user.Balance, &user.Withdrawn)
 	if err != nil {
 		middleware.Log.Error("Error fetching user", zap.String("userID", userID), zap.Error(err))
@@ -235,10 +257,10 @@ func (dr *DatabaseRepository) GetUser(ctx context.Context, userID string) (model
 
 func (dr *DatabaseRepository) CreateUser(ctx context.Context, user *model.User) error {
 	query := `
-		INSERT INTO users (id, password, balance, withdrawn, accrual)
+		INSERT INTO users (id, login, password)
 		VALUES ($1, $2, $3);`
 
-	_, err := dr.db.Exec(ctx, query, user.Login, user.Password, user.Balance, 0, 0)
+	_, err := dr.db.Exec(ctx, query, user.ID, user.Login, user.Password)
 
 	if err != nil {
 		if pgErr, ok := err.(*pgconn.PgError); ok && pgerrcode.IsIntegrityConstraintViolation(pgErr.Code) {
@@ -252,14 +274,14 @@ func (dr *DatabaseRepository) CreateUser(ctx context.Context, user *model.User) 
 	return nil
 }
 
-func (dr *DatabaseRepository) CreateWithdrawal(ctx context.Context, user model.User, withdrawal *model.Withdrawal) error {
+func (dr *DatabaseRepository) CreateWithdrawal(ctx context.Context, user model.User, withdrawal *Withdrawal) error {
 	query1 := `
 	UPDATE users
 	SET balance = $1, withdrawn = $2
 	WHERE id = $3;`
 
 	query2 := `
-	INSERT INTO withdrawals (order_id, user_uuid, processed_at, amount) 
+	INSERT INTO withdrawals (order_id, user_id, processed_at, sum) 
 	VALUES ($1, $2, $3, $4);`
 
 	tx, err := dr.db.Begin(ctx)
@@ -269,13 +291,13 @@ func (dr *DatabaseRepository) CreateWithdrawal(ctx context.Context, user model.U
 		return err
 	}
 
-	_, err = tx.Exec(ctx, query1, user.Balance, user.Withdrawn, user.Login)
+	_, err = tx.Exec(ctx, query1, user.Balance, user.Withdrawn, user.ID)
 	if err != nil {
 		tx.Rollback(ctx)
 		return err
 	}
 
-	_, err = tx.Exec(ctx, query2, withdrawal.OrderID, withdrawal.UserID, withdrawal.ProcessedAt, withdrawal.Amount)
+	_, err = tx.Exec(ctx, query2, withdrawal.OrderID, user.ID, withdrawal.ProcessedAt, withdrawal.Amount)
 	if err != nil {
 		tx.Rollback(ctx)
 		return err
@@ -297,7 +319,7 @@ func (dr *DatabaseRepository) GetWithdrawals(ctx context.Context, userID string)
 	}
 	defer rows.Close()
 
-	var withdrawals []model.Withdrawal
+	withdrawals := make([]model.Withdrawal, 0)
 	for rows.Next() {
 		var withdrawal model.Withdrawal
 		err := rows.Scan(&withdrawal.UserID, &withdrawal.OrderID, &withdrawal.ProcessedAt, &withdrawal.Amount)
@@ -308,9 +330,12 @@ func (dr *DatabaseRepository) GetWithdrawals(ctx context.Context, userID string)
 			}
 			return nil, err
 		}
+		withdrawal.Amount = withdrawal.Amount / 100
 		withdrawals = append(withdrawals, withdrawal)
 	}
-
+	if len(withdrawals) == 0 {
+		return &withdrawals, ErrNoWithdrawals
+	}
 	return &withdrawals, nil
 }
 

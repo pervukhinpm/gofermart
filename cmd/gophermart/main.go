@@ -32,6 +32,7 @@ func main() {
 	}(appRepository)
 
 	gophermartService := service.NewGophermartService(appRepository, *appConfig)
+	gophermartService.StartWorkers()
 
 	handler := api.NewGophermartHandler(gophermartService)
 
