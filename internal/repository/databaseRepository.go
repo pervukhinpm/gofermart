@@ -82,7 +82,7 @@ func (dr *DatabaseRepository) createOrdersDB(ctx context.Context) error {
 		user_id varchar REFERENCES users ON DELETE CASCADE,
 		status varchar NOT NULL,
 		uploaded_at timestamp with time zone NOT NULL,
-		accrual int,
+		accrual int DEFAULT 0,
 		CONSTRAINT orders_pk PRIMARY KEY (id)
 	);`
 	_, err := dr.db.Exec(ctx, query)
@@ -162,7 +162,8 @@ func (dr *DatabaseRepository) GetOrders(ctx context.Context, userID string) (*[]
 	query := `
 		SELECT id, user_id, status, uploaded_at, accrual
 		FROM orders
-		WHERE user_id = $1;`
+		WHERE user_id = $1
+		ORDER BY uploaded_at DESC;`
 
 	rows, err := dr.db.Query(ctx, query, userID)
 	if err != nil {
@@ -174,20 +175,18 @@ func (dr *DatabaseRepository) GetOrders(ctx context.Context, userID string) (*[]
 	orders := make([]model.Order, 0)
 	for rows.Next() {
 		var order model.Order
-		err := rows.Scan(&order.OrderNumber, &order.UserID, &order.Status, &order.ProcessedAt, &order.Accrual)
-		if err != nil {
-			middleware.Log.Error("Error scanning order row", zap.Error(err))
-			if errors.Is(err, pgx.ErrNoRows) {
-				return nil, ErrNoOrders
-			}
-			return nil, err
+		var intAccrual int
+		scanErr := rows.Scan(&order.OrderNumber, &order.UserID, &order.Status, &order.ProcessedAt, &intAccrual)
+		if scanErr != nil {
+			middleware.Log.Error("Error scanning order row", zap.Error(scanErr))
+			return nil, scanErr
 		}
-		order.Accrual = order.Accrual / 100
+		order.Accrual = float64(intAccrual) / 100
 		orders = append(orders, order)
 	}
 
 	if len(orders) == 0 {
-		return &orders, ErrNoOrders
+		return nil, ErrNoOrders
 	}
 
 	return &orders, nil
@@ -313,7 +312,8 @@ func (dr *DatabaseRepository) GetWithdrawals(ctx context.Context, userID string)
 	query := `
 		SELECT user_id, order_id, processed_at, sum
 		FROM withdrawals
-		WHERE user_id = $1;`
+		WHERE user_id = $1
+		ORDER BY processed_at DESC;`
 
 	rows, err := dr.db.Query(ctx, query, userID)
 	if err != nil {
