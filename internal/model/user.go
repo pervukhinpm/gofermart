@@ -1,11 +1,11 @@
 package model
 
 type User struct {
-	ID        string `json:"id"`
-	Login     string `json:"login"`
-	Password  string `json:"password"`
-	Balance   int    `json:"balance"`
-	Withdrawn int    `json:"withdrawn"`
+	ID        string  `json:"id"`
+	Login     string  `json:"login"`
+	Password  string  `json:"password"`
+	Balance   float64 `json:"balance"`
+	Withdrawn float64 `json:"withdrawn"`
 }
 
 type RegisterUser struct {

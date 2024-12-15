@@ -88,7 +88,7 @@ func (g *GophermartService) processAccrual(order *model.Order) {
 			UserID:      order.UserID,
 			Status:      accrual.Status,
 			ProcessedAt: order.ProcessedAt,
-			Accrual:     int(accrual.Accrual * 100),
+			Accrual:     accrual.Accrual * 100,
 		}
 		err = g.repo.UpdateOrder(context.Background(), updatedOrder)
 		if err != nil {

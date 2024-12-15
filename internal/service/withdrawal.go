@@ -25,7 +25,7 @@ func (g *GophermartService) CreateWithdraw(ctx context.Context, withdrawal *mode
 		return err
 	}
 
-	withdrawalAmount := int(withdrawal.Amount * 100)
+	withdrawalAmount := withdrawal.Amount * 100
 	if withdrawalAmount > user.Balance {
 		return ErrLowBalance
 	}
@@ -36,7 +36,7 @@ func (g *GophermartService) CreateWithdraw(ctx context.Context, withdrawal *mode
 
 	dbWithdrawal := repository.Withdrawal{
 		OrderID:     withdrawal.OrderID,
-		Amount:      withdrawalAmount,
+		Amount:      int(withdrawalAmount),
 		ProcessedAt: withdrawal.ProcessedAt,
 	}
 

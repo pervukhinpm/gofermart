@@ -7,5 +7,5 @@ type Order struct {
 	UserID      string      `json:"user_id"`
 	Status      OrderStatus `json:"status"`
 	ProcessedAt time.Time   `json:"processed_at"`
-	Accrual     int         `json:"accrual"`
+	Accrual     float64     `json:"accrual"`
 }
