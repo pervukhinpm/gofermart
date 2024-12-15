@@ -109,11 +109,6 @@ func (dr *DatabaseRepository) AddOrder(ctx context.Context, order *model.Order) 
 
 	result, err := dr.db.Exec(ctx, query, order.OrderNumber, order.UserID, order.Status, order.ProcessedAt)
 
-	if err != nil {
-		middleware.Log.Error("Error inserting order", zap.Error(err))
-		return err
-	}
-
 	rowsAffected := result.RowsAffected()
 
 	if rowsAffected == 0 {
@@ -130,6 +125,11 @@ func (dr *DatabaseRepository) AddOrder(ctx context.Context, order *model.Order) 
 		}
 
 		return ErrOrderAlreadyExist
+	}
+
+	if err != nil {
+		middleware.Log.Error("Error inserting order", zap.Error(err))
+		return err
 	}
 
 	return nil
