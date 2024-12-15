@@ -9,3 +9,10 @@ type Order struct {
 	ProcessedAt time.Time   `json:"processed_at"`
 	Accrual     float64     `json:"accrual"`
 }
+
+type OrderResponse struct {
+	Number     string      `json:"number"`
+	Status     OrderStatus `json:"status"`
+	Accrual    float64     `json:"accrual"`
+	UploadedAt time.Time   `json:"uploaded_at"`
+}
