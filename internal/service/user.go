@@ -32,7 +32,7 @@ func (g *GophermartService) RegisterUser(ctx context.Context, registerUser *mode
 		return "", err
 	}
 
-	return jwt.BuildJWTString(userID)
+	return jwt.GenerateJWT(userID, g.appConfig)
 }
 
 func (g *GophermartService) LoginUser(ctx context.Context, loginUser *model.LoginUser) (string, error) {
@@ -46,7 +46,7 @@ func (g *GophermartService) LoginUser(ctx context.Context, loginUser *model.Logi
 	}
 
 	if loginUser.Login == dbUser.Login && loginUser.Password == dbUser.Password {
-		return jwt.BuildJWTString(dbUser.ID)
+		return jwt.GenerateJWT(dbUser.ID, g.appConfig)
 	}
 
 	return "", ErrInvalidLoginAndPassword

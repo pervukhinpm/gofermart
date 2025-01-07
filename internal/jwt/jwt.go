@@ -3,6 +3,7 @@ package jwt
 import (
 	"fmt"
 	"github.com/golang-jwt/jwt/v4"
+	"github.com/pervukhinpm/gophermart/internal/config"
 	"time"
 )
 
@@ -11,20 +12,14 @@ type Claims struct {
 	UserID string
 }
 
-const (
-	TokenExp  = time.Hour * 3
-	SecretKey = "secret_key"
-)
-
-func BuildJWTString(userID string) (string, error) {
+func GenerateJWT(userID string, config config.Config) (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(TokenExp)),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(config.TokenExpiration)),
 		},
 		UserID: userID,
 	})
-
-	tokenString, err := token.SignedString([]byte(SecretKey))
+	tokenString, err := token.SignedString([]byte(config.TokenSecretKey))
 	if err != nil {
 		return "", err
 	}
@@ -32,13 +27,13 @@ func BuildJWTString(userID string) (string, error) {
 	return tokenString, nil
 }
 
-func GetUserID(tokenString string) (string, error) {
+func GetUserID(tokenString string, config config.Config) (string, error) {
 	claims := &Claims{}
 	token, err := jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (interface{}, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signed method: %v", t.Header["alg"])
 		}
-		return []byte(SecretKey), nil
+		return []byte(config.TokenSecretKey), nil
 	})
 	if err != nil {
 		return "", err

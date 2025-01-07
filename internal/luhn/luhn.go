@@ -7,7 +7,7 @@ import (
 )
 
 func Validate(number string) bool {
-	if len(number) == 0 {
+	if number == "" {
 		return false
 	}
 	digits := number[:(len(number) - 1)]
@@ -21,15 +21,6 @@ func Validate(number string) bool {
 	}
 
 	return checksum == calculatedSum
-}
-
-func Calculate(number string) (string, error) {
-	checksum, err := Checksum(number)
-	if err != nil {
-		return "", err
-	}
-
-	return number + fmt.Sprint(checksum), nil
 }
 
 func Checksum(number string) (int, error) {

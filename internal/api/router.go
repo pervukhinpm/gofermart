@@ -2,10 +2,11 @@ package api
 
 import (
 	"github.com/go-chi/chi/v5"
+	"github.com/pervukhinpm/gophermart/internal/config"
 	"github.com/pervukhinpm/gophermart/internal/middleware"
 )
 
-func Router(g *GophermartHandler) chi.Router {
+func Router(g *GophermartHandler, config config.Config) chi.Router {
 	r := chi.NewRouter()
 
 	r.Use(middleware.Logger)
@@ -18,7 +19,7 @@ func Router(g *GophermartHandler) chi.Router {
 
 	// Маршруты, требующие аутентификации
 	r.Group(func(r chi.Router) {
-		r.Use(middleware.Auth)
+		r.Use(middleware.Auth(config))
 
 		r.Post("/api/user/orders", g.CreateOrder)
 		r.Get("/api/user/orders", g.GetOrders)

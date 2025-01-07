@@ -2,32 +2,38 @@ package middleware
 
 import (
 	"context"
+	"github.com/pervukhinpm/gophermart/internal/config"
 	"github.com/pervukhinpm/gophermart/internal/jwt"
 	"net/http"
 	"strings"
 )
 
-func Auth(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
+const (
+	bearerHeader        = "Bearer "
+	authorizationHeader = "Authorization"
+)
 
-		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+func Auth(config config.Config) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			authHeader := r.Header.Get(authorizationHeader)
+			if authHeader == "" || !strings.HasPrefix(authHeader, bearerHeader) {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
 
-		userID, err := jwt.GetUserID(tokenString)
+			tokenString := strings.TrimPrefix(authHeader, bearerHeader)
 
-		if err != nil {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
+			userID, err := jwt.GetUserID(tokenString, config)
+			if err != nil {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
 
-		ctx := setUserID(r.Context(), userID)
-
-		next.ServeHTTP(w, r.WithContext(ctx))
-	})
+			ctx := setUserID(r.Context(), userID)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
 }
 
 type UserID struct {

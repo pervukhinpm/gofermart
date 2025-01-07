@@ -7,7 +7,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/pervukhinpm/gophermart/internal/config"
 	"github.com/pervukhinpm/gophermart/internal/middleware"
 	"github.com/pervukhinpm/gophermart/internal/model"
 	"go.uber.org/zap"
@@ -26,80 +25,21 @@ type Repository interface {
 	CreateWithdrawal(ctx context.Context, user model.User, withdrawal *Withdrawal) error
 	GetWithdrawals(ctx context.Context, userID string) (*[]model.Withdrawal, error)
 
-	Close() error
+	Migrate() error
 }
 
 type DatabaseRepository struct {
-	db *pgxpool.Pool
+	pool *pgxpool.Pool
 }
 
-func NewDatabaseRepository(ctx context.Context, config config.Config) (*DatabaseRepository, error) {
-	db, err := pgxpool.New(context.Background(), config.DataBaseURI)
-	if err != nil {
-		return nil, err
+func NewDatabaseRepository(pool *pgxpool.Pool) *DatabaseRepository {
+	return &DatabaseRepository{
+		pool: pool,
 	}
-
-	dbRepository := DatabaseRepository{
-		db: db,
-	}
-
-	err = dbRepository.createUsersDB(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	err = dbRepository.createOrdersDB(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	err = dbRepository.createWithdrawalsDB(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	return &dbRepository, nil
 }
 
-func (dr *DatabaseRepository) createUsersDB(ctx context.Context) error {
-	query := `
-		CREATE TABLE IF NOT EXISTS users (
-		id varchar UNIQUE NOT NULL,
-		login varchar UNIQUE NOT NULL,
-		password varchar NOT NULL,
-		balance int DEFAULT 0,
-		withdrawn int DEFAULT 0,
-		CONSTRAINT users_pk PRIMARY KEY (id)
-		);`
-	_, err := dr.db.Exec(ctx, query)
-	return err
-}
-
-func (dr *DatabaseRepository) createOrdersDB(ctx context.Context) error {
-	query := `
-	CREATE TABLE IF NOT EXISTS orders (
-		id varchar NOT NULL,
-		user_id varchar REFERENCES users ON DELETE CASCADE,
-		status varchar NOT NULL,
-		uploaded_at timestamp with time zone NOT NULL,
-		accrual int DEFAULT 0,
-		CONSTRAINT orders_pk PRIMARY KEY (id)
-	);`
-	_, err := dr.db.Exec(ctx, query)
-	return err
-}
-
-func (dr *DatabaseRepository) createWithdrawalsDB(ctx context.Context) error {
-	query := `
-		CREATE TABLE IF NOT EXISTS withdrawals (
-		user_id varchar REFERENCES users ON DELETE CASCADE,
-		order_id varchar NOT NULL,
-		processed_at timestamp with time zone NOT NULL,
-		sum int,
-		CONSTRAINT withdrawals_pk PRIMARY KEY (order_id)
-		);`
-	_, err := dr.db.Exec(ctx, query)
-	return err
+func (dr *DatabaseRepository) Migrate() error {
+	return migrate(dr.pool)
 }
 
 func (dr *DatabaseRepository) AddOrder(ctx context.Context, order *model.Order) error {
@@ -107,7 +47,7 @@ func (dr *DatabaseRepository) AddOrder(ctx context.Context, order *model.Order) 
 	INSERT INTO orders (id, user_id, status, uploaded_at)
 	VALUES ($1, $2, $3, $4);`
 
-	result, err := dr.db.Exec(ctx, query, order.OrderNumber, order.UserID, order.Status, order.ProcessedAt)
+	result, err := dr.pool.Exec(ctx, query, order.OrderNumber, order.UserID, order.Status, order.ProcessedAt)
 
 	rowsAffected := result.RowsAffected()
 
@@ -142,7 +82,7 @@ func (dr *DatabaseRepository) GetOrder(ctx context.Context, id string) (*model.O
 		WHERE id = $1;`
 
 	order := model.Order{}
-	err := dr.db.QueryRow(ctx, query, id).Scan(
+	err := dr.pool.QueryRow(ctx, query, id).Scan(
 		&order.OrderNumber,
 		&order.UserID,
 		&order.Status,
@@ -165,7 +105,7 @@ func (dr *DatabaseRepository) GetOrders(ctx context.Context, userID string) (*[]
 		WHERE user_id = $1
 		ORDER BY uploaded_at DESC;`
 
-	rows, err := dr.db.Query(ctx, query, userID)
+	rows, err := dr.pool.Query(ctx, query, userID)
 	if err != nil {
 		middleware.Log.Error("Error fetching orders for user", zap.String("userID", userID), zap.Error(err))
 		return nil, err
@@ -203,7 +143,7 @@ func (dr *DatabaseRepository) UpdateOrder(ctx context.Context, order *model.Orde
 	SET balance = balance + $1
 	WHERE id = $2;`
 
-	tx, err := dr.db.Begin(ctx)
+	tx, err := dr.pool.Begin(ctx)
 
 	if err != nil {
 		tx.Rollback(ctx)
@@ -232,7 +172,7 @@ func (dr *DatabaseRepository) GetUserByLogin(ctx context.Context, login string) 
 		WHERE login = $1;`
 
 	user := model.User{Login: login}
-	err := dr.db.QueryRow(ctx, query, login).Scan(&user.ID, &user.Password, &user.Balance, &user.Withdrawn)
+	err := dr.pool.QueryRow(ctx, query, login).Scan(&user.ID, &user.Password, &user.Balance, &user.Withdrawn)
 	if err != nil {
 		middleware.Log.Error("Error fetching user", zap.String("login", login), zap.Error(err))
 		return user, err
@@ -248,7 +188,7 @@ func (dr *DatabaseRepository) GetUserByID(ctx context.Context, userID string) (m
 		WHERE id = $1;`
 
 	user := model.User{ID: userID}
-	err := dr.db.QueryRow(ctx, query, userID).Scan(&user.Login, &user.Password, &user.Balance, &user.Withdrawn)
+	err := dr.pool.QueryRow(ctx, query, userID).Scan(&user.Login, &user.Password, &user.Balance, &user.Withdrawn)
 	if err != nil {
 		middleware.Log.Error("Error fetching user", zap.String("userID", userID), zap.Error(err))
 		return user, err
@@ -262,7 +202,7 @@ func (dr *DatabaseRepository) CreateUser(ctx context.Context, user *model.User) 
 		INSERT INTO users (id, login, password)
 		VALUES ($1, $2, $3);`
 
-	_, err := dr.db.Exec(ctx, query, user.ID, user.Login, user.Password)
+	_, err := dr.pool.Exec(ctx, query, user.ID, user.Login, user.Password)
 
 	if err != nil {
 		if pgErr, ok := err.(*pgconn.PgError); ok && pgerrcode.IsIntegrityConstraintViolation(pgErr.Code) {
@@ -286,7 +226,7 @@ func (dr *DatabaseRepository) CreateWithdrawal(ctx context.Context, user model.U
 	INSERT INTO withdrawals (order_id, user_id, processed_at, sum) 
 	VALUES ($1, $2, $3, $4);`
 
-	tx, err := dr.db.Begin(ctx)
+	tx, err := dr.pool.Begin(ctx)
 
 	if err != nil {
 		tx.Rollback(ctx)
@@ -315,7 +255,7 @@ func (dr *DatabaseRepository) GetWithdrawals(ctx context.Context, userID string)
 		WHERE user_id = $1
 		ORDER BY processed_at DESC;`
 
-	rows, err := dr.db.Query(ctx, query, userID)
+	rows, err := dr.pool.Query(ctx, query, userID)
 	if err != nil {
 		middleware.Log.Error("Error fetching withdrawals for user", zap.String("userID", userID), zap.Error(err))
 		return nil, err
@@ -325,7 +265,7 @@ func (dr *DatabaseRepository) GetWithdrawals(ctx context.Context, userID string)
 	withdrawals := make([]model.Withdrawal, 0)
 	for rows.Next() {
 		var withdrawal model.Withdrawal
-		err := rows.Scan(&withdrawal.UserID, &withdrawal.OrderID, &withdrawal.ProcessedAt, &withdrawal.Amount)
+		err = rows.Scan(&withdrawal.UserID, &withdrawal.OrderID, &withdrawal.ProcessedAt, &withdrawal.Amount)
 		if err != nil {
 			middleware.Log.Error("Error scanning withdrawal row", zap.Error(err))
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -340,9 +280,4 @@ func (dr *DatabaseRepository) GetWithdrawals(ctx context.Context, userID string)
 		return &withdrawals, ErrNoWithdrawals
 	}
 	return &withdrawals, nil
-}
-
-func (dr *DatabaseRepository) Close() error {
-	dr.db.Close()
-	return nil
 }

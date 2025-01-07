@@ -117,7 +117,7 @@ func (g *GophermartService) getAccrual(order *model.Order) (*model.Accrual, erro
 		return accrual, err
 	}
 	bytes, err := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	defer resp.Body.Close()
 	if err != nil {
 		return accrual, err
 	}
