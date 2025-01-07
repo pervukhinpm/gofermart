@@ -64,39 +64,56 @@ func (g *GophermartService) worker(id int) {
 }
 
 func (g *GophermartService) processAccrual(order *model.Order) {
-	accrual, err := g.getAccrual(order)
+	const maxRetries = 10
+	const retryBaseDelay = time.Second
 
-	retryDelay := time.Second * 1
+	var attempt int
+	for attempt = 0; attempt < maxRetries; attempt++ {
+		log.Printf("Attempt %d: Processing order %s", attempt+1, order.OrderNumber)
 
-	if err != nil {
-		log.Printf("Error getting accrual for order %s: %s", order.OrderNumber, err)
-
-		// Обработка кода 429 (Too Many Requests)
-		if tooManyRequestErr := new(ErrTooManyRequests); errors.As(err, &tooManyRequestErr) {
-			retryDelay = time.Second * time.Duration(tooManyRequestErr.retryAfter)
-		}
-	}
-
-	time.Sleep(retryDelay)
-
-	switch accrual.Status {
-	case model.OrderStatusRegistered, model.OrderStatusProcessing:
-		g.processAccrual(order)
-	case model.OrderStatusProcessed, model.OrderStatusInvalid:
-		updatedOrder := &model.Order{
-			OrderNumber: order.OrderNumber,
-			UserID:      order.UserID,
-			Status:      accrual.Status,
-			ProcessedAt: order.ProcessedAt,
-			Accrual:     accrual.Accrual * 100,
-		}
-		err = g.repo.UpdateOrder(context.Background(), updatedOrder)
+		accrual, err := g.getAccrual(order)
 		if err != nil {
-			log.Printf("Error updating order status for order %s: %s", order.OrderNumber, err)
+			log.Printf("Error getting accrual for order %s: %s", order.OrderNumber, err)
+
+			// Если ошибка - 429 (Too Many Requests), ждём указанное время
+			if tooManyRequestErr := new(ErrTooManyRequests); errors.As(err, &tooManyRequestErr) {
+				delay := time.Second * time.Duration(tooManyRequestErr.retryAfter)
+				log.Printf("Too many requests for order %s, retrying after %s", order.OrderNumber, delay)
+				time.Sleep(delay)
+				continue
+			}
+
+			time.Sleep(retryBaseDelay)
+			continue
 		}
-	default:
-		g.processAccrual(order)
+
+		switch accrual.Status {
+		case model.OrderStatusRegistered, model.OrderStatusProcessing:
+			log.Printf("Order %s is still processing. Retrying...", order.OrderNumber)
+			time.Sleep(retryBaseDelay)
+			continue
+		case model.OrderStatusProcessed, model.OrderStatusInvalid:
+			updatedOrder := &model.Order{
+				OrderNumber: order.OrderNumber,
+				UserID:      order.UserID,
+				Status:      accrual.Status,
+				ProcessedAt: order.ProcessedAt,
+				Accrual:     accrual.Accrual * 100,
+			}
+			err := g.repo.UpdateOrder(context.Background(), updatedOrder)
+			if err != nil {
+				log.Printf("Error updating order status for order %s: %s", order.OrderNumber, err)
+			} else {
+				log.Printf("Order %s successfully processed", order.OrderNumber)
+			}
+			return
+		default:
+			log.Printf("Unknown status for order %s: %s. Retrying...", order.OrderNumber, accrual.Status)
+			time.Sleep(retryBaseDelay)
+		}
 	}
+
+	log.Printf("Max retries reached for order %s. Giving up.", order.OrderNumber)
 }
 
 func (g *GophermartService) getAccrual(order *model.Order) (*model.Accrual, error) {
@@ -135,9 +152,9 @@ func (g *GophermartService) getAccrual(order *model.Order) (*model.Accrual, erro
 		retryAfterStr := resp.Header.Get("Retry-After")
 		retryAfter := 60
 		if retryAfterStr != "" {
-			retryAfter, err = strconv.Atoi(retryAfterStr)
-			if err != nil {
-				return nil, NewErrTooManyRequests(retryAfter)
+			parsedRetryAfter, err := strconv.Atoi(retryAfterStr)
+			if err == nil {
+				retryAfter = parsedRetryAfter
 			}
 		}
 		return nil, NewErrTooManyRequests(retryAfter)
