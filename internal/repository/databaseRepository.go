@@ -144,21 +144,19 @@ func (dr *DatabaseRepository) UpdateOrder(ctx context.Context, order *model.Orde
 	WHERE id = $2;`
 
 	tx, err := dr.pool.Begin(ctx)
+	defer tx.Rollback(ctx)
 
 	if err != nil {
-		tx.Rollback(ctx)
 		return err
 	}
 
 	_, err = tx.Exec(ctx, query1, order.Status, order.Accrual, order.OrderNumber)
 	if err != nil {
-		tx.Rollback(ctx)
 		return err
 	}
 
 	_, err = tx.Exec(ctx, query2, order.Accrual, order.UserID)
 	if err != nil {
-		tx.Rollback(ctx)
 		return err
 	}
 
@@ -227,21 +225,19 @@ func (dr *DatabaseRepository) CreateWithdrawal(ctx context.Context, user model.U
 	VALUES ($1, $2, $3, $4);`
 
 	tx, err := dr.pool.Begin(ctx)
+	defer tx.Rollback(ctx)
 
 	if err != nil {
-		tx.Rollback(ctx)
 		return err
 	}
 
 	_, err = tx.Exec(ctx, query1, user.Balance, user.Withdrawn, user.ID)
 	if err != nil {
-		tx.Rollback(ctx)
 		return err
 	}
 
 	_, err = tx.Exec(ctx, query2, withdrawal.OrderID, user.ID, withdrawal.ProcessedAt, withdrawal.Amount)
 	if err != nil {
-		tx.Rollback(ctx)
 		return err
 	}
 
